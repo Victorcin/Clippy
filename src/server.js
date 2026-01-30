@@ -64,7 +64,7 @@ process.env.CLAWDBOT_GATEWAY_TOKEN = process.env.CLAWDBOT_GATEWAY_TOKEN || OPENC
 
 // Where the gateway will listen internally (we proxy to it).
 const INTERNAL_GATEWAY_PORT = Number.parseInt(process.env.INTERNAL_GATEWAY_PORT ?? "18789", 10);
-const INTERNAL_GATEWAY_HOST = process.env.INTERNAL_GATEWAY_HOST ?? "127.0.0.1";
+const INTERNAL_GATEWAY_HOST = "127.0.0.1";
 const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}`;
 
 // Always run the built-from-source CLI entry directly to avoid PATH/global-install mismatches.
@@ -93,6 +93,72 @@ function isConfigured() {
 
 let gatewayProc = null;
 let gatewayStarting = null;
+let tailscaledProc = null;
+
+async function startTailscaled() {
+  const authKey = process.env.TAILSCALE_AUTHKEY?.trim();
+  if (!authKey) return;
+
+  if (tailscaledProc) return;
+
+  console.log("[wrapper] starting tailscaled (userspace networking)");
+  const tsState = path.join(STATE_DIR, "tailscale");
+  fs.mkdirSync(tsState, { recursive: true });
+
+  // Use the standard socket path so openclaw internal calls find it easily
+  const tsSocketDir = "/var/run/tailscale";
+  try { fs.mkdirSync(tsSocketDir, { recursive: true }); } catch {}
+  const tsSocket = path.join(tsSocketDir, "tailscaled.sock");
+
+  tailscaledProc = childProcess.spawn("tailscaled", [
+    "--tun=userspace-networking",
+    "--socks5-server=localhost:1055",
+    "--outbound-http-proxy-listen=localhost:1055",
+    "--state=" + path.join(tsState, "tailscaled.state"),
+    "--socket=" + tsSocket
+  ], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      TS_AUTHKEY: authKey
+    }
+  });
+
+  tailscaledProc.on("error", (err) => {
+    console.error("[wrapper] tailscaled error:", err);
+  });
+
+  // Also run 'tailscale up' to ensure we join the network
+  setTimeout(() => {
+    console.log("[wrapper] tailscale up...");
+    childProcess.spawn("tailscale", [
+      "--socket=" + tsSocket,
+      "up",
+      "--authkey=" + authKey,
+      "--hostname=clippy-railway",
+      "--accept-dns=false"
+    ], { stdio: "inherit" });
+
+    // Expose the wrapper (port 8080) to the tailnet
+    setTimeout(() => {
+      console.log("[wrapper] resetting tailscale serve state...");
+      childProcess.spawnSync("tailscale", ["--socket=" + tsSocket, "serve", "reset"]);
+
+      console.log(`[wrapper] tailscale serve (exposing dashboard on port 80 via proxy to wrapper at ${PORT})...`);
+      // Use --http=80 to explicitly serve on port 80 pointing to the wrapper
+      childProcess.spawn("tailscale", [
+        "--socket=" + tsSocket,
+        "serve",
+        "--bg",
+        "--http=80",
+        String(PORT)
+      ], { stdio: "inherit" });
+    }, 5000);
+  }, 2000);
+
+  // Give it a moment to start
+  await sleep(2000);
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -133,7 +199,7 @@ async function startGateway() {
     "gateway",
     "run",
     "--bind",
-    "loopback",
+    "0.0.0.0", // Bind to 0.0.0.0 so tailscaled can find it more easily in userspace mode
     "--port",
     String(INTERNAL_GATEWAY_PORT),
     "--auth",
@@ -936,10 +1002,18 @@ const proxy = httpProxy.createProxyServer({
   target: GATEWAY_TARGET,
   ws: true,
   xfwd: true,
+  changeOrigin: true, // Ensure correctly forwarded Host headers
 });
 
 proxy.on("error", (err, _req, _res) => {
   console.error("[proxy]", err);
+});
+
+app.use((req, res, next) => {
+  if (req.path !== "/setup/healthz") {
+    console.log(`[wrapper] ${req.method} ${req.path}`);
+  }
+  next();
 });
 
 app.use(async (req, res) => {
@@ -959,7 +1033,7 @@ app.use(async (req, res) => {
   return proxy.web(req, res, { target: GATEWAY_TARGET });
 });
 
-const server = app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", async () => {
   console.log(`[wrapper] listening on :${PORT}`);
   console.log(`[wrapper] state dir: ${STATE_DIR}`);
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
@@ -968,6 +1042,14 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   if (!SETUP_PASSWORD) {
     console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
   }
+  
+  // Start tailscaled if configured
+  try {
+    await startTailscaled();
+  } catch (err) {
+    console.error("[wrapper] failed to start tailscaled:", err);
+  }
+
   // Don't start gateway unless configured; proxy will ensure it starts.
 });
 
@@ -977,11 +1059,19 @@ server.on("upgrade", async (req, socket, head) => {
     return;
   }
   try {
-    await ensureGatewayRunning();
-  } catch {
+    const ready = await ensureGatewayRunning();
+    if (!ready.ok) {
+       console.error("[wrapper] upgrade failed: gateway not ready", ready.reason);
+       socket.destroy();
+       return;
+    }
+  } catch (err) {
+    console.error("[wrapper] upgrade error during ensureGatewayRunning:", err);
     socket.destroy();
     return;
   }
+  
+  // Proxy the upgrade
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 

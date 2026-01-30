@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix: Integrar Tailscale y arreglar proxy de gateway\n\n- Agregar instalación de Tailscale en Dockerfile\n- Implementar startup automático de tailscaled con userspace networking\n- Cambiar gateway bind de loopback a 0.0.0.0 para compatibilidad con Tailscale\n- Agregar changeOrigin al proxy para headers correctos\n- Agregar logging de requests en wrapper\n- Tailscale serve expone puerto 80 apuntando al wrapper\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix: Integrar Tailscale y arreglar proxy de gateway\n\n- Agregar instalación de Tailscale en Dockerfile\n- Implementar startup automático de tailscaled con userspace networking\n- Cambiar gateway bind de loopback a 0.0.0.0 para compatibilidad con Tailscale\n- Agregar changeOrigin al proxy para headers correctos\n- Agregar logging de requests en wrapper\n- Tailscale serve expone puerto 80 apuntando al wrapper\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(railway ssh:*)",
+      "Bash(railway logs:*)",
+      "Bash(railway link:*)",
+      "Bash(railway run:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

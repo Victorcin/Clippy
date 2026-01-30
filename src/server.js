@@ -1050,7 +1050,15 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     console.error("[wrapper] failed to start tailscaled:", err);
   }
 
-  // Don't start gateway unless configured; proxy will ensure it starts.
+  // Start gateway automatically if configured (needed for Tailscale access)
+  if (isConfigured()) {
+    console.log("[wrapper] Auto-starting gateway for Tailscale access...");
+    try {
+      await ensureGatewayRunning();
+    } catch (err) {
+      console.error("[wrapper] failed to auto-start gateway:", err);
+    }
+  }
 });
 
 server.on("upgrade", async (req, socket, head) => {

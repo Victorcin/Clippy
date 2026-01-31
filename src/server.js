@@ -174,18 +174,8 @@ async function startTailscaled() {
       console.log("[wrapper] resetting tailscale serve state...");
       childProcess.spawnSync("tailscale", ["--socket=" + tsSocket, "serve", "reset"]);
 
-      // HTTP on port 80
-      console.log(`[wrapper] tailscale serve HTTP (port 80 -> wrapper:${PORT})...`);
-      childProcess.spawn("tailscale", [
-        "--socket=" + tsSocket,
-        "serve",
-        "--bg",
-        "--tcp=80",
-        `tcp://localhost:${PORT}`
-      ], { stdio: "inherit" });
-
       // HTTPS on port 443 (wrapper will serve HTTPS directly)
-      console.log(`[wrapper] tailscale serve HTTPS (port 443 -> wrapper HTTPS)...`);
+      console.log(`[wrapper] tailscale serve HTTPS (port 443 -> wrapper HTTPS:8443)...`);
       childProcess.spawn("tailscale", [
         "--socket=" + tsSocket,
         "serve",

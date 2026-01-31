@@ -192,7 +192,7 @@ async function startTailscaled() {
           "serve",
           "--bg",
           "--tcp=443",
-          `tcp://localhost:8443`
+          `tcp://127.0.0.1:8443`  // IPv4 explicit para evitar problemas con IPv6
         ], { stdio: "inherit" });
       }, 2000);
     }, 8000);

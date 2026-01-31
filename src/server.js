@@ -139,13 +139,24 @@ async function startTailscaled() {
       "--accept-dns=false"
     ], { stdio: "inherit" });
 
-    // Expose the wrapper (port 8080) to the tailnet
+    // Expose the wrapper (port 8080) to the tailnet with HTTPS
     setTimeout(() => {
       console.log("[wrapper] resetting tailscale serve state...");
       childProcess.spawnSync("tailscale", ["--socket=" + tsSocket, "serve", "reset"]);
 
-      console.log(`[wrapper] tailscale serve TCP (port 80 -> wrapper:${PORT}, supports WebSocket)...`);
-      // Use TCP proxy instead of HTTP proxy to support WebSocket upgrades
+      console.log(`[wrapper] tailscale serve HTTPS (port 443 -> wrapper:${PORT}, with WebSocket support)...`);
+      // Tailscale serve with --https terminates TLS and proxies to HTTP backend
+      // This mode DOES support WebSocket upgrades
+      childProcess.spawn("tailscale", [
+        "--socket=" + tsSocket,
+        "serve",
+        "--bg",
+        "--https=443",
+        `http://localhost:${PORT}`
+      ], { stdio: "inherit" });
+
+      // Also serve HTTP on port 80 for backwards compatibility
+      console.log(`[wrapper] tailscale serve HTTP (port 80 -> wrapper:${PORT})...`);
       childProcess.spawn("tailscale", [
         "--socket=" + tsSocket,
         "serve",

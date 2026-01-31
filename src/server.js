@@ -1,6 +1,7 @@
 import childProcess from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 
@@ -139,14 +140,42 @@ async function startTailscaled() {
       "--accept-dns=false"
     ], { stdio: "inherit" });
 
-    // Expose the wrapper (port 8080) to the tailnet via TCP proxy
+    // Get HTTPS certificates from Tailscale
+    setTimeout(() => {
+      console.log("[wrapper] Obtaining HTTPS certificates from Tailscale...");
+      const certDir = path.join(STATE_DIR, "tailscale-certs");
+      fs.mkdirSync(certDir, { recursive: true });
+
+      const certFile = path.join(certDir, "cert.pem");
+      const keyFile = path.join(certDir, "key.pem");
+
+      const certProc = childProcess.spawnSync("tailscale", [
+        "--socket=" + tsSocket,
+        "cert",
+        "--cert-file=" + certFile,
+        "--key-file=" + keyFile,
+        "clippy-railway.tail1d2ac8.ts.net"
+      ], { stdio: "inherit" });
+
+      if (certProc.status === 0) {
+        console.log("[wrapper] HTTPS certificates obtained successfully");
+        console.log(`[wrapper] Cert: ${certFile}`);
+        console.log(`[wrapper] Key: ${keyFile}`);
+
+        // Signal that certs are ready
+        global.tailscaleCerts = { certFile, keyFile };
+      } else {
+        console.error("[wrapper] Failed to obtain HTTPS certificates");
+      }
+    }, 3000);
+
+    // Expose the wrapper to the tailnet via TCP proxy
     setTimeout(() => {
       console.log("[wrapper] resetting tailscale serve state...");
       childProcess.spawnSync("tailscale", ["--socket=" + tsSocket, "serve", "reset"]);
 
-      console.log(`[wrapper] tailscale serve (port 80 -> wrapper:${PORT}, TCP proxy with WebSocket support)...`);
-      // TCP proxy supports WebSocket and is encrypted by Tailscale/WireGuard
-      // No need for additional HTTPS within the Tailnet - WireGuard encrypts everything
+      // HTTP on port 80
+      console.log(`[wrapper] tailscale serve HTTP (port 80 -> wrapper:${PORT})...`);
       childProcess.spawn("tailscale", [
         "--socket=" + tsSocket,
         "serve",
@@ -154,7 +183,17 @@ async function startTailscaled() {
         "--tcp=80",
         `tcp://localhost:${PORT}`
       ], { stdio: "inherit" });
-    }, 5000);
+
+      // HTTPS on port 443 (wrapper will serve HTTPS directly)
+      console.log(`[wrapper] tailscale serve HTTPS (port 443 -> wrapper HTTPS)...`);
+      childProcess.spawn("tailscale", [
+        "--socket=" + tsSocket,
+        "serve",
+        "--bg",
+        "--tcp=443",
+        `tcp://localhost:8443`
+      ], { stdio: "inherit" });
+    }, 8000);
   }, 2000);
 
   // Give it a moment to start
@@ -1050,6 +1089,60 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
   } catch (err) {
     console.error("[wrapper] failed to start tailscaled:", err);
   }
+
+  // Wait for certificates and start HTTPS server
+  setTimeout(() => {
+    if (global.tailscaleCerts) {
+      const { certFile, keyFile } = global.tailscaleCerts;
+
+      try {
+        if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
+          console.log("[wrapper] Starting HTTPS server on port 8443...");
+
+          const httpsServer = https.createServer({
+            cert: fs.readFileSync(certFile),
+            key: fs.readFileSync(keyFile)
+          }, app);
+
+          httpsServer.listen(8443, "0.0.0.0", () => {
+            console.log("[wrapper] HTTPS server listening on :8443");
+          });
+
+          // Handle WebSocket upgrades for HTTPS server
+          httpsServer.on("upgrade", async (req, socket, head) => {
+            console.log(`[wrapper] HTTPS WEBSOCKET UPGRADE: ${req.url} from ${socket.remoteAddress}`);
+
+            if (!isConfigured()) {
+              console.error("[wrapper] upgrade rejected: not configured");
+              socket.destroy();
+              return;
+            }
+            try {
+              const ready = await ensureGatewayRunning();
+              if (!ready.ok) {
+                console.error("[wrapper] upgrade failed: gateway not ready", ready.reason);
+                socket.destroy();
+                return;
+              }
+            } catch (err) {
+              console.error("[wrapper] upgrade error during ensureGatewayRunning:", err);
+              socket.destroy();
+              return;
+            }
+
+            console.log(`[wrapper] Proxying HTTPS WebSocket upgrade to ${GATEWAY_TARGET}`);
+            proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
+          });
+        } else {
+          console.warn("[wrapper] Certificate files not found, HTTPS server not started");
+        }
+      } catch (err) {
+        console.error("[wrapper] Failed to start HTTPS server:", err);
+      }
+    } else {
+      console.warn("[wrapper] Tailscale certificates not available, HTTPS server not started");
+    }
+  }, 10000);
 
   // Start gateway automatically if configured (needed for Tailscale access)
   if (isConfigured()) {

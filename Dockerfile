@@ -24,6 +24,9 @@ WORKDIR /openclaw
 ARG OPENCLAW_GIT_REF=main
 RUN git clone --depth 1 --branch "${OPENCLAW_GIT_REF}" https://github.com/openclaw/openclaw.git .
 
+# Patch: Update pi-ai to latest version to fix Antigravity support
+RUN sed -i 's/"0.49.3"/"0.50.7"/g' package.json
+
 # Patch: relax version requirements for packages that may reference unpublished versions.
 # Apply to all extension package.json files to handle workspace protocol (workspace:*).
 RUN set -eux; \

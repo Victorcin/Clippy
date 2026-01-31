@@ -144,14 +144,14 @@ async function startTailscaled() {
       console.log("[wrapper] resetting tailscale serve state...");
       childProcess.spawnSync("tailscale", ["--socket=" + tsSocket, "serve", "reset"]);
 
-      console.log(`[wrapper] tailscale serve (exposing dashboard on port 80 via proxy to wrapper at ${PORT})...`);
-      // Use --http=80 to explicitly serve on port 80 pointing to the wrapper
+      console.log(`[wrapper] tailscale serve TCP (port 80 -> wrapper:${PORT}, supports WebSocket)...`);
+      // Use TCP proxy instead of HTTP proxy to support WebSocket upgrades
       childProcess.spawn("tailscale", [
         "--socket=" + tsSocket,
         "serve",
         "--bg",
-        "--http=80",
-        String(PORT)
+        "--tcp=80",
+        `tcp://localhost:${PORT}`
       ], { stdio: "inherit" });
     }, 5000);
   }, 2000);

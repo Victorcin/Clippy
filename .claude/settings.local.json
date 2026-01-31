@@ -9,7 +9,11 @@
       "Bash(railway run:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(railway --help:*)"
+      "Bash(railway --help:*)",
+      "Bash(railway variables --help:*)",
+      "Bash(railway variables list:*)",
+      "Bash(railway variable set:*)",
+      "Bash(railway status:*)"
     ]
   }
 }

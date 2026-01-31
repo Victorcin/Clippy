@@ -1062,7 +1062,10 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
 });
 
 server.on("upgrade", async (req, socket, head) => {
+  console.log(`[wrapper] WEBSOCKET UPGRADE: ${req.url} from ${socket.remoteAddress}`);
+
   if (!isConfigured()) {
+    console.error("[wrapper] upgrade rejected: not configured");
     socket.destroy();
     return;
   }
@@ -1078,7 +1081,8 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  
+
+  console.log(`[wrapper] Proxying WebSocket upgrade to ${GATEWAY_TARGET}`);
   // Proxy the upgrade
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
